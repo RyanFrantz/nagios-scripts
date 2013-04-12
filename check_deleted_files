@@ -1,0 +1,96 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use English qw( -no_match_vars );
+use Data::Dumper;
+
+# Configuration for nagios
+#my $CRITICAL_THRESHOLD  = 5;    # used as a percentage
+my $CRITICAL_THRESHOLD  = 0;    # used as a percentage  # debug
+my %nagios_states = (
+    "OK"        =>  "0",
+    "WARNING"   =>  "1",
+    "CRITICAL"  =>  "2",
+    "UNKNOWN"   =>  "3"
+);
+my $status = "OK";  # start off on the good foot
+
+my %df     = ();
+my @mounts = ();
+
+open my $df_kp, '-|', 'df -kP' or die "Cannot run df -kP: $OS_ERROR";
+while ( my $df_line = <$df_kp> ) {
+    next unless $df_line =~ m{
+        ^
+        .*       # filesystem
+        \s+
+        (\d+)    # 1024-blocks
+        \s+
+        \d+      # Used
+        \s+
+        \d+      # Available
+        \s+
+        \d+%     # Capacity
+        \s+
+        (/.*?) # Mounted on
+        \s*
+        $
+    }x;
+    $df{ $2 }->{ 'size' } = $1;
+    push @mounts, $2;
+}
+close $df_kp;
+
+
+my @mounts_sorted_by_length = sort { length( $b ) <=> length( $a ) } @mounts;
+#my @mounts_sorted_by_length = map { $_ eq '/' ? '(?=/)' : $_ } sort { length( $b ) <=> length( $a ) } @mounts; # depesz
+my $mounts_re = sprintf '%s', join( '|', @mounts_sorted_by_length );
+
+my $total_lost = 0;
+
+opendir my $dir, '/proc';
+my @inside = grep { /^\d+$/ } readdir $dir;
+closedir $dir;
+
+for my $process ( @inside ) {
+    opendir my $dir, "/proc/$process/fd" or next;
+    for my $fd_name ( grep { /^\d+$/ } readdir $dir ) {
+        my $link_name = "/proc/$process/fd/$fd_name";
+        my @stat      = stat( $link_name );
+        next if 0 < $stat[ 3 ];
+
+        my $file_name = readlink( $link_name );
+        #print "$file_name\n";  # debug
+
+        # This regexp below should always match, so the "next unless" is just sanity check
+        #next unless $file_name =~ m{^($mounts_re)(?:\s|/|$)};  # depesz
+        next unless $file_name =~ m{^($mounts_re)};
+        my $mountpoint = $1;
+        $total_lost += $stat[ 7 ];
+        $df{ $mountpoint }->{ 'deleted' } += $stat[ 7 ] / 1024;    # df data is in kB, but stat is in bytes
+    }
+    closedir $dir;
+}
+
+
+#print Dumper \%df; # debug
+my $total_lost_Mb = $total_lost / ( 1024 * 1024 );
+for my $mountpoint ( keys %df ) {
+    next unless $df{ $mountpoint }->{ 'deleted' };
+    my $lost_percent = 100 * $df{ $mountpoint }->{ 'deleted' } / $df{ $mountpoint }->{ 'size' };
+    my $deleted_Mb = $df{ $mountpoint }->{ 'deleted' } / 1024;  # 'deleted has already been converted to KB
+    # only complain if we're above the CRITICAL_THRESHOLD
+    if ( $lost_percent >= $CRITICAL_THRESHOLD ) {
+        $status = "CRITICAL";
+        printf "$status: %dMb (%.3f%%) being held open in deleted files on \'%s\'! Overall, %dMb is being held open in deleted files on this host.\n", $deleted_Mb, $lost_percent, $mountpoint, $total_lost_Mb;
+        exit( $nagios_states{ $status } ) if $lost_percent >= $CRITICAL_THRESHOLD;
+    }
+}
+
+if ( $total_lost_Mb > 0 ) {
+    printf "$status: %dMb being held open in deleted files.\n", $total_lost_Mb;
+} else {
+    printf "$status: No deleted files are being held open.\n", $total_lost_Mb;
+}
+exit( $nagios_states{ $status } );
