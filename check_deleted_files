@@ -81,22 +81,22 @@ for my $process ( @inside ) {
     closedir $dir;
 }
 
-my $total_lost_Mb = $total_lost / ( 1024 * 1024 );
+my $total_lost_MB = $total_lost / ( 1024 * 1024 );
 for my $mountpoint ( keys %df ) {
     next unless $df{ $mountpoint }->{ 'deleted' };
     my $lost_percent = 100 * $df{ $mountpoint }->{ 'deleted' } / $df{ $mountpoint }->{ 'size' };
-    my $deleted_Mb   = $df{ $mountpoint }->{ 'deleted' } / 1024;                                   # 'deleted has already been converted to KB
+    my $deleted_MB   = $df{ $mountpoint }->{ 'deleted' } / 1024;                                   # 'deleted has already been converted to KB
                                                                                                    # only complain if we're above the CRITICAL_THRESHOLD
     if ( $lost_percent >= $CRITICAL_THRESHOLD ) {
         $status = 'CRITICAL';
-        printf "%s: %dMb (%.3f%%) being held open in deleted files on \'%s\'! Overall, %dMb is being held open in deleted files on this host.\n", $status, $deleted_Mb, $lost_percent,
-            $mountpoint, $total_lost_Mb;
+        printf "%s: %dMB (%.3f%%) being held open in deleted files on \'%s\'! Overall, %dMB is being held open in deleted files on this host.\n", $status, $deleted_MB, $lost_percent,
+            $mountpoint, $total_lost_MB;
         exit( $nagios_states{ $status } ) if $lost_percent >= $CRITICAL_THRESHOLD;
     }
 }
 
-if ( $total_lost_Mb > 0 ) {
-    printf "%s: %dMb being held open in deleted files.\n", $status, $total_lost_Mb;
+if ( $total_lost_MB > 0 ) {
+    printf "%s: %dMB being held open in deleted files.\n", $status, $total_lost_MB;
 }
 else {
     printf "%s: No deleted files are being held open.\n", $status;
