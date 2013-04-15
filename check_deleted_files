@@ -15,6 +15,7 @@ my %nagios_states      = (
 my $status = "OK";             # start off on the good foot
 
 my %df     = ();
+my %deleted_files  = ();
 my @mounts = ();
 
 open my $df_kp, '-|', 'df -kP' or die "Cannot run df -kP: $OS_ERROR";
@@ -68,20 +69,28 @@ for my $process ( @inside ) {
         next if 0 < $stat[ 3 ];
 
         my $file_name = readlink( $link_name );
+        # prevent counting a single file multiple times in cases were multiple processes have a file descriptor to it (i.e. chef-server workers)
+        unless ( exists $deleted_files{ $file_name } ) {
+            # This regexp below should always match, so the "next unless" is just
+            # sanity check
+            next unless $file_name =~ m{^($mounts_re)};
+            my $mountpoint = $1;
 
-        # This regexp below should always match, so the "next unless" is just
-        # sanity check
-        next unless $file_name =~ m{^($mounts_re)};
-        my $mountpoint = $1;
-
-        $total_lost += $stat[ 7 ];
-        $df{ $mountpoint }->{ 'deleted' } += $stat[ 7 ] / 1024;    # df data is in kB, but stat is in bytes
-        $df{ $mountpoint }->{ 'deleted_files' }->{ $link_name } = $file_name;
+            my $size = $stat[7];
+            my $size_KB = $size / 1024; # df data is in KB, but stat is in bytes
+            $total_lost += $size_KB;
+            $df{ $mountpoint }->{ 'deleted' } += $size_KB;
+            $df{ $mountpoint }->{ 'deleted_files' }->{ $link_name } = $file_name;
+            $deleted_files{ $file_name }->{ 'size_KB' } = $size_KB;
+            push @{ $deleted_files{ $file_name }->{ 'procs' } }, $process;  # store the processes that have a file descriptot to this file, in case we need it (i.e. counts)
+        } else {    # simply push the PID into our pretty little array
+            push @{ $deleted_files{ $file_name }->{ 'procs' } }, $process;
+        }
     }
     closedir $dir;
 }
 
-my $total_lost_MB = $total_lost / ( 1024 * 1024 );
+my $total_lost_MB = $total_lost / 1024;
 for my $mountpoint ( keys %df ) {
     next unless $df{ $mountpoint }->{ 'deleted' };
     my $lost_percent = 100 * $df{ $mountpoint }->{ 'deleted' } / $df{ $mountpoint }->{ 'size' };
@@ -89,7 +98,7 @@ for my $mountpoint ( keys %df ) {
                                                                                                    # only complain if we're above the CRITICAL_THRESHOLD
     if ( $lost_percent >= $CRITICAL_THRESHOLD ) {
         $status = 'CRITICAL';
-        printf "%s: %dMB (%.3f%%) being held open in deleted files on \'%s\'! Overall, %dMB is being held open in deleted files on this host.\n", $status, $deleted_MB, $lost_percent,
+        printf "%s: %dMB (%.2f%%) being held open in deleted files on \'%s\'! Overall, %dMB is being held open in deleted files on this host.\n", $status, $deleted_MB, $lost_percent,
             $mountpoint, $total_lost_MB;
         exit( $nagios_states{ $status } ) if $lost_percent >= $CRITICAL_THRESHOLD;
     }
