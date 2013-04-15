@@ -5,8 +5,7 @@ use warnings;
 use English qw( -no_match_vars );
 
 # Configuration for nagios
-#my $CRITICAL_THRESHOLD  = 5;    # used as a percentage
-my $CRITICAL_THRESHOLD = 0;    # used as a percentage  # debug
+my $CRITICAL_THRESHOLD  = 5;    # used as a percentage
 my %nagios_states      = (
     "OK"       => "0",
     "WARNING"  => "1",
